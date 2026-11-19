@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>wst17</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#9CA1A9; }
+  body.wst17-art-on { overflow:hidden !important; }
+  #wst17-art { position:fixed; inset:0; z-index:2147483000; background:#9CA1A9; overflow:hidden; }
+  #wst17-art canvas { display:block; width:100%; height:100%; }
+  #wst17-art .halo { position:absolute; inset:0; pointer-events:none;
+    background:radial-gradient(ellipse 70% 45% at 50% -12%, rgba(255,255,255,0.28), rgba(255,255,255,0) 65%); }
+  #wst17-art .vignette { position:absolute; inset:0; pointer-events:none;
+    background:radial-gradient(ellipse 90% 90% at 50% 46%, rgba(0,0,0,0) 55%, rgba(35,40,50,0.22) 100%); }
+  #wst17-art .grain { position:absolute; inset:-50%; width:200%; height:200%; pointer-events:none; opacity:.055;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)'/%3E%3C/svg%3E");
+    animation:wst17-grain 1.2s steps(4) infinite; }
+  @keyframes wst17-grain { 0%{transform:translate(0,0)} 25%{transform:translate(-2%,1%)} 50%{transform:translate(1%,-2%)} 75%{transform:translate(-1%,2%)} 100%{transform:translate(0,0)} }
+  #wst17-art .mark { position:absolute; top:26px; left:30px; color:rgba(255,255,255,.94);
+    font:600 clamp(26px,3.4vw,42px)/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing:.05em;
+    text-shadow:0 1px 14px rgba(60,66,78,.35); pointer-events:none; user-select:none; }
+  #wst17-art .caption { position:absolute; right:30px; bottom:24px; color:rgba(255,255,255,.55);
+    font:400 11px/1.5 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing:.14em; text-transform:uppercase;
+    pointer-events:none; user-select:none; text-align:right; }
+  #wst17-art .hint { position:absolute; left:50%; bottom:30px; transform:translateX(-50%);
+    color:rgba(255,255,255,.78); font:400 12px/1 "Helvetica Neue", Helvetica, Arial, sans-serif;
+    letter-spacing:.28em; text-transform:uppercase; pointer-events:none; user-select:none;
+    padding:10px 18px; border:1px solid rgba(255,255,255,.35); border-radius:2px;
+    transition:opacity 1.4s ease; white-space:nowrap; }
+  #wst17-art .hint.gone { opacity:0; }
+  #wst17-art .fallback { position:absolute; inset:0; display:none; place-items:center; color:#fff;
+    font:400 15px/1.6 "Helvetica Neue", Helvetica, Arial, sans-serif; text-align:center; padding:24px; }
+  @media (prefers-reduced-motion: reduce) { #wst17-art .grain { animation:none; } }
+</style>
+</head>
+<body>
+<div id="wst17-art">
+  <div class="halo"></div>
+  <div class="vignette"></div>
+  <div class="grain"></div>
+  <div class="mark">wst17</div>
+  <div class="hint" id="wst17-hint">move&ensp;·&ensp;click</div>
+  <div class="caption">particle study nº 1<br>interactive</div>
+  <div class="fallback" id="wst17-fallback">this piece needs WebGL —<br>try a current browser.</div>
+</div>
+<!-- SRI pinned: hash verified against downloaded cdnjs asset (see three.min.js in this dir) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" integrity="sha384-CI3ELBVUz9XQO+97x6nwMDPosPR5XvsxW2ua7N1Xeygeh1IxtgqtCkGfQY9WWdHu" crossorigin="anonymous"></script>
+<script>
+(function () {
+  var root = document.getElementById('wst17-art');
+  if (!root) return;
+  // Escape any CMS wrapper transforms: live directly on <body>.
+  if (root.parentElement !== document.body) document.body.appendChild(root);
+  document.body.classList.add('wst17-art-on');
+
+  var renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+  } catch (e) {
+    document.getElementById('wst17-fallback').style.display = 'grid';
+    return;
+  }
+  var DPR = Math.min(window.devicePixelRatio || 1, 2);
+  renderer.setPixelRatio(DPR);
+  renderer.setSize(root.clientWidth, root.clientHeight);
+  root.insertBefore(renderer.domElement, root.firstChild);
+
+  var BG = 0x9CA1A9;
+  var scene = new THREE.Scene();
+  scene.background = new THREE.Color(BG);
+  scene.fog = new THREE.Fog(BG, 10, 22);
+
+  var camera = new THREE.PerspectiveCamera(40, root.clientWidth / root.clientHeight, 0.1, 60);
+  camera.position.set(0, 0.75, 8.6);
+
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var SPIN = reduceMotion ? 0.05 : 0.22;
+
+  // ---------- particle sculpture ----------
+  var P = { pos: [], dir: [], col: [], alp: [], siz: [], rnd: [], fac: [] };
+  function jitter(a) { return 1 + (Math.random() - 0.5) * a; }
+  function randDir() {
+    var u = Math.random(), v = Math.random();
+    var th = 2 * Math.PI * u, ph = Math.acos(2 * v - 1);
+    return [Math.sin(ph) * Math.cos(th), Math.cos(ph), Math.sin(ph) * Math.sin(th)];
+  }
+  function shade(base, vary) {
+    var f = 1 + (Math.random() - 0.5) * vary;
+    return [base[0] * f, base[1] * f, base[2] * f];
+  }
+  var SLATE = [0.29, 0.34, 0.42], DARK = [0.20, 0.24, 0.30], DEEP = [0.13, 0.16, 0.21];
+  function push(x, y, z, dx, dy, dz, c, a, s, f) {
+    P.pos.push(x, y, z); P.dir.push(dx, dy, dz); P.col.push(c[0], c[1], c[2]);
+    P.alp.push(a); P.siz.push(s); P.rnd.push(Math.random()); P.fac.push(f || 0);
+  }
+  function ellipsoid(cx, cy, cz, rx, ry, rz, n, base, slantX) {
+    for (var i = 0; i < n; i++) {
+      var d = randDir(), j = jitter(0.05);
+      var x = cx + d[0] * rx * j, y = cy + d[1] * ry * j, z = cz + d[2] * rz * j;
+      if (slantX) x += (cy - y) * slantX;
+      push(x, y, z, d[0], d[1], d[2], shade(base, 0.26),
+        0.42 + Math.random() * 0.34, 0.030 + Math.random() * 0.028);
+    }
+  }
+  function sphere(cx, cy, cz, r, n, base, alpha, size, face) {
+    for (var i = 0; i < n; i++) {
+      var d = randDir(), j = jitter(0.06);
+      push(cx + d[0] * r * j, cy + d[1] * r * j, cz + d[2] * r * j,
+        d[0], d[1], d[2], shade(base, 0.2),
+        (alpha || 0.5) + Math.random() * 0.3, (size || 0.034) + Math.random() * 0.024, face);
+    }
+  }
+  function torusArc(cx, cy, cz, R, tube, a0, aLen, n, base) {
+    for (var i = 0; i < n; i++) {
+      var th = a0 + Math.random() * aLen, ph = Math.random() * Math.PI * 2;
+      var rr = R + tube * Math.cos(ph) * jitter(0.12);
+      var x = rr * Math.cos(th), y = rr * Math.sin(th), z = tube * Math.sin(ph) * jitter(0.12);
+      push(cx + x, cy + y, cz + z, Math.cos(th), Math.sin(th), 0, shade(base, 0.22),
+        0.5 + Math.random() * 0.3, 0.028 + Math.random() * 0.022);
+    }
+  }
+  function cup(cx, cy, cz, r, h, n, base) {
+    for (var i = 0; i < n; i++) {
+      var th = Math.random() * Math.PI * 2, x, y, z;
+      if (Math.random() < 0.42) { // caps
+        var rr = r * Math.sqrt(Math.random());
+        x = (Math.random() < 0.5 ? -1 : 1) * h / 2; y = rr * Math.cos(th); z = rr * Math.sin(th);
+      } else { // side
+        x = (Math.random() - 0.5) * h; y = r * Math.cos(th); z = r * Math.sin(th);
+      }
+      push(cx + x, cy + y, cz + z, 0, Math.cos(th), Math.sin(th), shade(base, 0.2),
+        0.55 + Math.random() * 0.3, 0.030 + Math.random() * 0.022);
+    }
+  }
+
+  // body + head (chubby, big-headed)
+  ellipsoid(0, 0.10, 0, 0.70, 0.78, 0.60, 6500, SLATE, 0);
+  sphere(0, 1.25, 0, 0.78, 6500, SLATE);
+  // ears (slightly behind the headphone plane)
+  sphere(-0.55, 1.86, -0.14, 0.19, 450, SLATE);
+  sphere(0.55, 1.86, -0.14, 0.19, 450, SLATE);
+  // muzzle + nose
+  ellipsoid(0, 1.12, 0.68, 0.26, 0.18, 0.17, 700, SLATE, 0);
+  sphere(0, 1.19, 0.85, 0.05, 160, DEEP, 0.75, 0.03, 1);
+  // eyes
+  sphere(-0.27, 1.40, 0.735, 0.075, 260, DEEP, 0.8, 0.032, 1);
+  sphere(0.27, 1.40, 0.735, 0.075, 260, DEEP, 0.8, 0.032, 1);
+  // arms
+  ellipsoid(-0.74, 0.26, 0.04, 0.17, 0.42, 0.17, 1100, SLATE, -0.28);
+  ellipsoid(0.74, 0.26, 0.04, 0.17, 0.42, 0.17, 1100, SLATE, 0.28);
+  // feet
+  ellipsoid(-0.30, -0.74, 0.12, 0.22, 0.16, 0.30, 700, SLATE, 0);
+  ellipsoid(0.30, -0.74, 0.12, 0.22, 0.16, 0.30, 700, SLATE, 0);
+  // headphones: band over the top + ear cups
+  torusArc(0, 1.25, 0, 0.86, 0.06, 0, Math.PI, 1500, DARK);
+  cup(-0.88, 1.25, 0, 0.30, 0.17, 950, DARK);
+  cup(0.88, 1.25, 0, 0.30, 0.17, 950, DARK);
+
+  var N = P.rnd.length;
+  var geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(P.pos, 3));
+  geo.setAttribute('aDir', new THREE.Float32BufferAttribute(P.dir, 3));
+  geo.setAttribute('aColor', new THREE.Float32BufferAttribute(P.col, 3));
+  geo.setAttribute('aAlpha', new THREE.Float32BufferAttribute(P.alp, 1));
+  geo.setAttribute('aSize', new THREE.Float32BufferAttribute(P.siz, 1));
+  geo.setAttribute('aRand', new THREE.Float32BufferAttribute(P.rnd, 1));
+  geo.setAttribute('aFace', new THREE.Float32BufferAttribute(P.fac, 1));
+
+  var uniforms = {
+    uTime: { value: 0 },
+    uMouse: { value: new THREE.Vector3(0, 0, 99) },
+    uMouseStrength: { value: 0 },
+    uPulse: { value: 0 },
+    uScale: { value: 1 },
+    uCenter: { value: new THREE.Vector3(0, 0.55, 0) },
+    uFog: { value: new THREE.Color(BG) }
+  };
+  var mat = new THREE.ShaderMaterial({
+    uniforms: uniforms,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.NormalBlending,
+    vertexShader: [
+      'uniform float uTime; uniform vec3 uMouse; uniform float uMouseStrength;',
+      'uniform float uPulse; uniform float uScale; uniform vec3 uCenter;',
+      'attribute vec3 aDir; attribute vec3 aColor; attribute float aAlpha;',
+      'attribute float aSize; attribute float aRand; attribute float aFace;',
+      'varying vec3 vColor; varying float vAlpha; varying float vFog;',
+      'void main() {',
+      '  vec3 p = position + aDir * (sin(uTime * 0.9 + aRand * 6.2831) * 0.02);',
+      '  vec4 wp = modelMatrix * vec4(p, 1.0);',
+      '  vec3 d = wp.xyz - uMouse;',
+      '  float infl = smoothstep(1.35, 0.0, length(d)) * uMouseStrength;',
+      '  wp.xyz += normalize(d + vec3(0.0001)) * infl * 0.68;',
+      '  vec3 dc = wp.xyz - uCenter;',
+      '  wp.xyz += normalize(dc + vec3(0.0001)) * uPulse * (0.3 + 0.45 * aRand);',
+      '  vec4 mv = viewMatrix * wp;',
+      '  gl_Position = projectionMatrix * mv;',
+      '  float tw = 0.85 + 0.25 * sin(uTime * 2.0 + aRand * 40.0);',
+      '  gl_PointSize = aSize * tw * uScale / max(0.1, -mv.z);',
+      '  vColor = aColor;',
+      '  vec4 cv = viewMatrix * vec4(uCenter, 1.0);',
+      '  float behind = smoothstep(0.0, 1.1, cv.z - mv.z);',
+      '  vAlpha = aAlpha * (1.0 - infl * 0.72) * (1.0 - behind * (0.45 + 0.4 * aFace));',
+      '  vFog = smoothstep(9.0, 20.0, -mv.z);',
+      '}'
+    ].join('\n'),
+    fragmentShader: [
+      'precision mediump float;',
+      'uniform vec3 uFog;',
+      'varying vec3 vColor; varying float vAlpha; varying float vFog;',
+      'void main() {',
+      '  float d = length(gl_PointCoord - 0.5);',
+      '  float a = smoothstep(0.5, 0.12, d) * vAlpha;',
+      '  if (a < 0.012) discard;',
+      '  gl_FragColor = vec4(mix(vColor, uFog, vFog), a);',
+      '}'
+    ].join('\n')
+  });
+  var points = new THREE.Points(geo, mat);
+  points.frustumCulled = false;
+
+  var tiltGroup = new THREE.Group();
+  var spinGroup = new THREE.Group();
+  var figure = new THREE.Group();
+  spinGroup.add(points);
+  tiltGroup.add(spinGroup);
+  figure.add(tiltGroup);
+  figure.position.y = 0.12;
+  scene.add(figure);
+
+  // ---------- platform ----------
+  var platform = new THREE.Group();
+  var base = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.18, 2.36, 0.22, 72),
+    new THREE.MeshBasicMaterial({ color: 0x565C66 })
+  );
+  base.position.y = -1.42;
+  platform.add(base);
+
+  var ringMats = [];
+  var rings = [];
+  [[1.32, -1.24, 0.020], [1.68, -1.28, 0.018], [2.04, -1.32, 0.016]].forEach(function (r) {
+    var m = new THREE.MeshBasicMaterial({ color: 0xD8EDF7, transparent: true, opacity: 0.88 });
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(r[0], r[2], 8, 140), m);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = r[1];
+    platform.add(ring);
+    ringMats.push(m); rings.push(ring);
+  });
+
+  // soft glow disc (canvas radial gradient)
+  function glowTexture(inner, outer) {
+    var c = document.createElement('canvas'); c.width = c.height = 256;
+    var g = c.getContext('2d');
+    var grd = g.createRadialGradient(128, 128, 8, 128, 128, 128);
+    grd.addColorStop(0, inner);
+    grd.addColorStop(1, outer);
+    g.fillStyle = grd; g.fillRect(0, 0, 256, 256);
+    var t = new THREE.CanvasTexture(c);
+    return t;
+  }
+  var glow = new THREE.Mesh(
+    new THREE.PlaneGeometry(7.4, 7.4),
+    new THREE.MeshBasicMaterial({
+      map: glowTexture('rgba(214,238,248,0.85)', 'rgba(214,238,248,0)'),
+      transparent: true, opacity: 0.5, depthWrite: false
+    })
+  );
+  glow.rotation.x = -Math.PI / 2;
+  glow.position.y = -1.20;
+  platform.add(glow);
+  scene.add(platform);
+
+  // ---------- drifting dust ----------
+  var DUST = 850, dp = [], dr = [];
+  for (var i = 0; i < DUST; i++) {
+    dp.push((Math.random() - 0.5) * 11, Math.random() * 5.6 - 1.5, (Math.random() - 0.5) * 7);
+    dr.push(Math.random());
+  }
+  var dgeo = new THREE.BufferGeometry();
+  dgeo.setAttribute('position', new THREE.Float32BufferAttribute(dp, 3));
+  dgeo.setAttribute('aRand', new THREE.Float32BufferAttribute(dr, 1));
+  var dmat = new THREE.ShaderMaterial({
+    uniforms: { uTime: uniforms.uTime, uScale: uniforms.uScale, uFog: uniforms.uFog },
+    transparent: true, depthWrite: false,
+    vertexShader: [
+      'uniform float uTime; uniform float uScale;',
+      'attribute float aRand; varying float vA; varying float vFog;',
+      'void main() {',
+      '  vec3 p = position;',
+      '  p.y = mod(p.y + 1.5 + uTime * (0.06 + 0.10 * aRand), 5.6) - 1.5;',
+      '  p.x += sin(uTime * 0.3 + aRand * 40.0) * 0.25;',
+      '  vec4 mv = modelViewMatrix * vec4(p, 1.0);',
+      '  gl_Position = projectionMatrix * mv;',
+      '  gl_PointSize = (0.012 + 0.02 * aRand) * uScale / max(0.1, -mv.z);',
+      '  vA = 0.14 + 0.2 * aRand;',
+      '  vFog = smoothstep(9.0, 20.0, -mv.z);',
+      '}'
+    ].join('\n'),
+    fragmentShader: [
+      'precision mediump float; uniform vec3 uFog;',
+      'varying float vA; varying float vFog;',
+      'void main() {',
+      '  float d = length(gl_PointCoord - 0.5);',
+      '  float a = smoothstep(0.5, 0.1, d) * vA;',
+      '  if (a < 0.01) discard;',
+      '  gl_FragColor = vec4(mix(vec3(0.96, 0.98, 1.0), uFog, vFog), a);',
+      '}'
+    ].join('\n')
+  });
+  var dust = new THREE.Points(dgeo, dmat);
+  dust.frustumCulled = false;
+  scene.add(dust);
+
+  // ---------- interaction ----------
+  var ndc = new THREE.Vector2(0, 0);
+  var raycaster = new THREE.Raycaster();
+  var plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  var hit = new THREE.Vector3();
+  var mouseTarget = new THREE.Vector3(0, 0, 99);
+  var strengthTarget = 0, pulse = 0, interacted = false;
+  var hint = document.getElementById('wst17-hint');
+
+  function setPointer(x, y) {
+    ndc.x = (x / root.clientWidth) * 2 - 1;
+    ndc.y = -(y / root.clientHeight) * 2 + 1;
+    raycaster.setFromCamera(ndc, camera);
+    if (raycaster.ray.intersectPlane(plane, hit)) mouseTarget.copy(hit);
+    strengthTarget = 1;
+    if (!interacted) { interacted = true; setTimeout(function () { hint.classList.add('gone'); }, 2500); }
+  }
+  window.addEventListener('pointermove', function (e) { setPointer(e.clientX, e.clientY); }, { passive: true });
+  window.addEventListener('pointerdown', function (e) {
+    setPointer(e.clientX, e.clientY);
+    pulse = 1;
+  }, { passive: true });
+  window.addEventListener('pointerleave', function () { strengthTarget = 0; });
+  document.addEventListener('mouseleave', function () { strengthTarget = 0; });
+  setTimeout(function () { hint.classList.add('gone'); }, 9000);
+
+  // ---------- loop ----------
+  function setScale() {
+    uniforms.uScale.value = renderer.domElement.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+  }
+  function resize() {
+    var w = root.clientWidth, h = root.clientHeight;
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, h);
+    setScale();
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  var clock = new THREE.Clock();
+  var camBase = new THREE.Vector3(0, 0.75, 8.6);
+  var look = new THREE.Vector3(0, 0.45, 0);
+
+  var simTime = 0;
+  function update(dt) {
+    simTime += dt;
+    var t = simTime;
+    uniforms.uTime.value = t;
+
+    spinGroup.rotation.y = t * SPIN;
+    figure.position.y = 0.12 + (reduceMotion ? 0 : Math.sin(t * 0.7) * 0.07);
+    tiltGroup.rotation.x += ((-ndc.y * 0.10) - tiltGroup.rotation.x) * Math.min(1, dt * 3);
+    tiltGroup.rotation.z += ((ndc.x * 0.05) - tiltGroup.rotation.z) * Math.min(1, dt * 3);
+
+    uniforms.uMouse.value.lerp(mouseTarget, Math.min(1, dt * 10));
+    uniforms.uMouseStrength.value += (strengthTarget - uniforms.uMouseStrength.value) * Math.min(1, dt * 6);
+    pulse *= Math.exp(-dt * 2.1);
+    uniforms.uPulse.value = pulse;
+
+    for (var i = 0; i < ringMats.length; i++) {
+      ringMats[i].opacity = 0.82 + 0.1 * Math.sin(t * 1.3 + i * 1.7) + pulse * 0.18;
+      var s = 1 + pulse * 0.05 * (i + 1);
+      rings[i].scale.set(s, s, 1);
+    }
+    glow.material.opacity = 0.46 + 0.06 * Math.sin(t * 0.9) + pulse * 0.2;
+
+    camera.position.x += ((camBase.x + ndc.x * 0.55) - camera.position.x) * Math.min(1, dt * 2.5);
+    camera.position.y += ((camBase.y + ndc.y * 0.3) - camera.position.y) * Math.min(1, dt * 2.5);
+    camera.lookAt(look);
+  }
+  function tick() {
+    requestAnimationFrame(tick);
+    if (document.hidden) { clock.getDelta(); return; }
+    update(Math.min(clock.getDelta(), 0.05));
+    renderer.render(scene, camera);
+  }
+  // test hook: step frames manually (background tabs throttle rAF)
+  window.__wst17 = {
+    step: function (dt) { update(dt); renderer.render(scene, camera); },
+    uniforms: uniforms, spinGroup: spinGroup
+  };
+  tick();
+})();
+</script>
+</body>
+</html>
